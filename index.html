@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChargeGuard - Deployment & Dispatch Hub</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="shared.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased selection:bg-emerald-500 selection:text-black">
+
+  <!-- Header: Technical Operations Bar -->
+  <header class="border-b border-slate-800/90 bg-slate-900/95 px-6 py-3.5 sticky top-0 z-40">
+    <div class="max-w-6xl mx-auto flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+          <i class="fa-solid fa-shield-halved text-sm"></i>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-sm font-black tracking-wider text-white uppercase font-mono">CHARGEGUARD</h1>
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono border border-slate-700">v1.2-edge</span>
+          </div>
+          <p class="text-[11px] text-slate-400">Multi-Edge IoT Charging Guardian & Telemetry Console</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          SYSTEM READY
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="flex-1 max-w-6xl w-full mx-auto p-5 sm:p-6 flex flex-col gap-6">
+
+    <!-- Pairing Configuration Dispatcher (Industrial Utilitarian) -->
+    <section class="bg-slate-900/90 border border-slate-800 rounded-xl p-5 sm:p-6 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+      <div class="flex-1">
+        <div class="flex items-center gap-2 text-xs font-mono font-semibold text-emerald-400 uppercase tracking-wider">
+          <i class="fa-solid fa-network-wired text-[11px]"></i>
+          <span>Konfigurasi Jaringan & Sesi Edge</span>
+        </div>
+        <h2 class="text-xl sm:text-2xl font-bold text-white mt-1.5 tracking-tight">Sinkronisasi Seluruh Node ke Satu Room ID</h2>
+        <p class="text-xs sm:text-sm text-slate-300 mt-1.5 leading-relaxed max-w-2xl">
+          HP 1 (Guard), HP 2 (Watcher), dan Laptop (Dashboard) saling bertukar telemetri dan kendali darurat secara real-time melalui broker MQTT WebSockets pada saluran Room yang sama.
+        </p>
+      </div>
+      
+      <div class="w-full md:w-auto bg-slate-950 border border-slate-800 rounded-lg p-3.5 flex flex-col gap-2.5 min-w-[300px]">
+        <label for="roomInput" class="text-[11px] font-mono text-slate-400 font-medium flex items-center justify-between">
+          <span>ROOM / PAIRING ID:</span>
+          <span class="text-emerald-400">MQTT TOPIC PREFIX</span>
+        </label>
+        <div class="flex items-center gap-2">
+          <input type="text" id="roomInput" value="iot-lab-101" spellcheck="false" class="bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-white font-mono font-semibold text-xs focus:border-emerald-500 focus:outline-none w-full">
+          <button onclick="randomizeRoom()" class="px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs border border-slate-700 flex items-center gap-1.5 font-medium transition" title="Acak Room ID">
+            <i class="fa-solid fa-shuffle text-[11px]"></i>
+            <span>Acak</span>
+          </button>
+        </div>
+        <button onclick="applyRoomChange()" class="w-full py-2 px-3 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs tracking-wide transition flex items-center justify-center gap-2 shadow-sm">
+          <i class="fa-solid fa-arrows-rotate text-[11px]"></i>
+          <span>Terapkan ke Semua Node & QR</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- 3 Core Nodes Cards Grid -->
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-5">
+      
+      <!-- Node 1: Charging Node (HP 1 - Edge Guard) -->
+      <article class="bg-slate-900/80 border border-slate-800 rounded-xl p-5 flex flex-col justify-between hover:border-emerald-500/40 transition">
+        <div>
+          <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+            <span class="text-[11px] font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">NODE 1 &bull; GUARD</span>
+            <span class="text-xs text-slate-400 font-mono"><i class="fa-solid fa-mobile-screen mr-1"></i> HP 1</span>
+          </div>
+          <h3 class="text-base font-bold text-white mt-3.5">Edge Charging Guard</h3>
+          <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+            Diletakkan di stasiun pengisian. Membaca Battery Status API, getaran 3-sumbu (SMV), dan memicu sirine darurat. Dilengkapi mode Layar Hitam (AMOLED).
+          </p>
+
+          <!-- QR Code Container for HP 1 -->
+          <div class="my-4 p-3 bg-white rounded-lg flex flex-col items-center justify-center shadow-inner">
+            <div id="qrNode1"></div>
+            <span class="text-[10px] text-slate-600 font-mono font-medium mt-1.5">Scan kamera untuk membuka HP 1</span>
+          </div>
+        </div>
+
+        <a id="btnNode1" href="node1.html?room=iot-lab-101" target="_blank" class="w-full py-2.5 px-3 rounded-md font-semibold text-xs bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 flex items-center justify-center gap-2 transition">
+          <i class="fa-solid fa-arrow-up-right-from-square text-[11px]"></i>
+          <span>Buka Node 1 (HP 1)</span>
+        </a>
+      </article>
+
+      <!-- Node 2: Watcher Node (HP 2 - Remote Receiver) -->
+      <article class="bg-slate-900/80 border border-slate-800 rounded-xl p-5 flex flex-col justify-between hover:border-cyan-500/40 transition">
+        <div>
+          <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+            <span class="text-[11px] font-bold px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-mono">NODE 2 &bull; WATCHER</span>
+            <span class="text-xs text-slate-400 font-mono"><i class="fa-solid fa-bell mr-1"></i> HP 2</span>
+          </div>
+          <h3 class="text-base font-bold text-white mt-3.5">Remote Watcher & Pager</h3>
+          <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+            Dipegang oleh pemilik. Menerima notifikasi seketika, getaran darurat saat kabel dicabut, visualisasi status baterai HP 1, serta tombol disarm jarak jauh.
+          </p>
+
+          <!-- QR Code Container for HP 2 -->
+          <div class="my-4 p-3 bg-white rounded-lg flex flex-col items-center justify-center shadow-inner">
+            <div id="qrNode2"></div>
+            <span class="text-[10px] text-slate-600 font-mono font-medium mt-1.5">Scan kamera untuk membuka HP 2</span>
+          </div>
+        </div>
+
+        <a id="btnNode2" href="node2.html?room=iot-lab-101" target="_blank" class="w-full py-2.5 px-3 rounded-md font-semibold text-xs bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 flex items-center justify-center gap-2 transition">
+          <i class="fa-solid fa-arrow-up-right-from-square text-[11px]"></i>
+          <span>Buka Node 2 (HP 2)</span>
+        </a>
+      </article>
+
+      <!-- Central Command Center (Laptop / PC Dashboard) -->
+      <article class="bg-slate-900/80 border border-slate-800 rounded-xl p-5 flex flex-col justify-between hover:border-indigo-500/40 transition">
+        <div>
+          <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+            <span class="text-[11px] font-bold px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-mono">COMMAND CENTER</span>
+            <span class="text-xs text-slate-400 font-mono"><i class="fa-solid fa-laptop mr-1"></i> LAPTOP</span>
+          </div>
+          <h3 class="text-base font-bold text-white mt-3.5">Telemetry & Analytics</h3>
+          <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+            Pusat analitik regresi linear waktu pengisian ($Y = mX + c$), grafik spektrum getaran SMV real-time, remote threshold controller, dan audit trail lengkap.
+          </p>
+
+          <!-- Features Spec Box -->
+          <div class="my-4 p-3.5 bg-slate-950 border border-slate-800 rounded-lg flex flex-col gap-2 text-xs">
+            <div class="text-slate-300 font-mono text-[11px] font-semibold flex items-center gap-1.5">
+              <i class="fa-solid fa-chart-line text-indigo-400"></i> INSTRUMEN ANALITIK:
+            </div>
+            <ul class="text-[11px] text-slate-400 space-y-1 font-mono">
+              <li class="flex items-center gap-1.5"><i class="fa-solid fa-check text-emerald-400 text-[9px]"></i> Regresi Linear L(t) = m&middot;t + c</li>
+              <li class="flex items-center gap-1.5"><i class="fa-solid fa-check text-emerald-400 text-[9px]"></i> Rolling Buffer Akselerometer SMV</li>
+              <li class="flex items-center gap-1.5"><i class="fa-solid fa-check text-emerald-400 text-[9px]"></i> Audit Log Forensik 40 Event</li>
+              <li class="flex items-center gap-1.5"><i class="fa-solid fa-check text-emerald-400 text-[9px]"></i> Deteksi Tab Ganda (Anti-Konflik)</li>
+            </ul>
+          </div>
+        </div>
+
+        <a id="btnDash" href="dashboard.html?room=iot-lab-101" target="_blank" class="w-full py-2.5 px-3 rounded-md font-semibold text-xs bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center gap-2 transition shadow-sm">
+          <i class="fa-solid fa-arrow-up-right-from-square text-[11px]"></i>
+          <span>Buka Dashboard Pemantau</span>
+        </a>
+      </article>
+
+    </section>
+
+    <!-- Technical Operational Notice -->
+    <section class="bg-slate-900/60 border border-slate-800 rounded-xl p-4 text-xs text-slate-300 leading-relaxed flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-7 h-7 rounded bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 shrink-0">
+          <i class="fa-solid fa-info text-xs"></i>
+        </div>
+        <div>
+          <span class="font-semibold text-slate-200">Panduan Operasional Edge:</span>
+          <span class="text-slate-400 ml-1">Jalankan via HTTPS (Cloudflare Tunnel/ngrok) agar Sensor Gerak & Battery Status API dapat diakses oleh browser mobile.</span>
+        </div>
+      </div>
+      <div class="text-[11px] font-mono text-slate-500 shrink-0">
+        BROKER: broker.hivemq.com:8884/mqtt
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-800/80 py-3.5 px-6 text-center text-xs text-slate-500 font-mono">
+    CHARGEGUARD &bull; Multi-Edge Charging Security System &bull; MQTT over WebSockets
+  </footer>
+
+  <script>
+    let currentRoom = ChargeGuard.getRoomId();
+    document.getElementById('roomInput').value = currentRoom;
+
+    let qr1 = null;
+    let qr2 = null;
+
+    function getBaseUrl() {
+      const loc = window.location.href;
+      return loc.substring(0, loc.lastIndexOf('/') + 1);
+    }
+
+    function generateQRCodes() {
+      const base = getBaseUrl();
+      const urlNode1 = `${base}node1.html?room=${encodeURIComponent(currentRoom)}`;
+      const urlNode2 = `${base}node2.html?room=${encodeURIComponent(currentRoom)}`;
+      const urlDash = `dashboard.html?room=${encodeURIComponent(currentRoom)}`;
+
+      // Update button links
+      document.getElementById('btnNode1').href = urlNode1;
+      document.getElementById('btnNode2').href = urlNode2;
+      document.getElementById('btnDash').href = urlDash;
+
+      // Render QR Node 1
+      const qrContainer1 = document.getElementById('qrNode1');
+      qrContainer1.innerHTML = '';
+      qr1 = new QRCode(qrContainer1, {
+        text: urlNode1,
+        width: 140,
+        height: 140,
+        colorDark: "#090d16",
+        colorLight: "#ffffff",
+        correctLevel: QRCode.CorrectLevel.M
+      });
+
+      // Render QR Node 2
+      const qrContainer2 = document.getElementById('qrNode2');
+      qrContainer2.innerHTML = '';
+      qr2 = new QRCode(qrContainer2, {
+        text: urlNode2,
+        width: 140,
+        height: 140,
+        colorDark: "#090d16",
+        colorLight: "#ffffff",
+        correctLevel: QRCode.CorrectLevel.M
+      });
+    }
+
+    function applyRoomChange() {
+      const val = document.getElementById('roomInput').value.trim() || 'iot-lab-101';
+      currentRoom = val;
+      localStorage.setItem('chargeguard_room', currentRoom);
+      generateQRCodes();
+    }
+
+    function randomizeRoom() {
+      const rand = 'cg-' + Math.floor(100 + Math.random() * 900);
+      document.getElementById('roomInput').value = rand;
+      applyRoomChange();
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      generateQRCodes();
+    });
+  </script>
+</body>
+</html>

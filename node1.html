@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>ChargeGuard - Node 1 (Charging Node)</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Paho MQTT WebSockets Client -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="shared.js"></script>
+  <style>
+    @keyframes alertGlow {
+      0%, 100% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.4); }
+      50% { box-shadow: 0 0 45px rgba(239, 68, 68, 0.9); }
+    }
+    .theft-danger {
+      animation: alertGlow 1s infinite alternate;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans select-none pb-12">
+
+  <!-- Top App Bar: Tactical Edge Header -->
+  <header class="border-b border-slate-800/90 bg-slate-900/95 sticky top-0 z-30 px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-2.5">
+      <div class="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+        <i class="fa-solid fa-shield-halved text-xs"></i>
+      </div>
+      <div>
+        <div class="flex items-center gap-1.5">
+          <h1 class="text-xs font-black tracking-wider text-white font-mono uppercase">CHARGEGUARD</h1>
+          <span class="text-[9px] px-1 py-0.2 rounded bg-slate-800 text-emerald-400 font-mono border border-slate-700">NODE 1</span>
+        </div>
+        <p class="text-[10px] text-slate-400 font-mono">EDGE CHARGING GUARDIAN</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <div id="mqttBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-mono font-medium bg-rose-500/15 text-rose-400 border border-rose-500/30">
+        <span class="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
+        <span id="mqttStatusText">Offline</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="flex-1 max-w-lg w-full mx-auto p-4 flex flex-col gap-3.5">
+
+    <!-- Active Room & Pairing Header -->
+    <section class="bg-slate-900/90 border border-slate-800 rounded-xl p-3 flex items-center justify-between shadow-sm">
+      <div class="flex items-center gap-2 text-xs">
+        <i class="fa-solid fa-satellite-dish text-emerald-400 text-xs"></i>
+        <span class="text-slate-400 font-mono">ROOM:</span>
+        <span id="roomIdDisplay" class="font-mono text-xs font-bold text-emerald-300 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">...</span>
+      </div>
+      <button onclick="toggleConfigModal()" class="text-xs text-slate-300 hover:text-white px-2.5 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 font-mono flex items-center gap-1.5 transition">
+        <i class="fa-solid fa-sliders text-[11px]"></i>
+        <span>Pengaturan</span>
+      </button>
+    </section>
+
+    <!-- Start / Stop Armed Guardian Mode Button -->
+    <section id="guardToggleContainer" class="rounded-xl p-4 bg-slate-900/90 border border-slate-800 shadow-sm flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-bold text-white uppercase font-mono tracking-tight">Sistem Penjagaan Sensor</h2>
+            <span id="armedBadge" class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono border border-slate-700">STANDBY</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-0.5">Mempertahankan WakeLock layar dan memantau getaran 3-sumbu secara kontinu.</p>
+        </div>
+      </div>
+      <div class="flex flex-col sm:flex-row gap-2">
+        <button id="btnToggleGuard" onclick="toggleGuarding()" class="flex-1 min-h-[48px] py-3 px-4 rounded-lg font-bold text-xs tracking-wider transition-all duration-200 flex items-center justify-center gap-2 shadow-sm bg-emerald-600 hover:bg-emerald-500 text-white font-mono uppercase">
+          <i class="fa-solid fa-power-off text-sm"></i>
+          <span>AKTIFKAN PENGAWASAN (START GUARD)</span>
+        </button>
+        <button id="btnStealthMode" onclick="toggleStealthMode()" class="min-h-[48px] py-3 px-4 rounded-lg font-semibold text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center justify-center gap-2 font-mono transition" title="Layar Gelap Hemat Daya">
+          <i class="fa-solid fa-moon text-indigo-300 text-xs"></i>
+          <span>Layar Hitam</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Stealth Black Screen Overlay (AMOLED 100% Black) -->
+    <div id="stealthOverlay" onclick="exitStealthMode()" class="hidden fixed inset-0 z-50 bg-black flex flex-col items-center justify-between p-8 select-none cursor-pointer">
+      <div class="text-[11px] text-zinc-700 tracking-widest font-mono uppercase">ChargeGuard Stealth Active</div>
+      <div class="flex flex-col items-center gap-2 text-zinc-600 text-center">
+        <i class="fa-solid fa-shield text-2xl text-zinc-700 animate-pulse"></i>
+        <p class="text-xs text-zinc-500 max-w-xs leading-relaxed">Mode AMOLED Siaga. Sensor & WakeLock tetap aktif. Sentuh layar untuk kembali.</p>
+      </div>
+      <div class="text-xs text-zinc-700 font-mono" id="stealthClock">--:-- WIB</div>
+    </div>
+
+    <!-- 5-Second Grace Period Countdown Banner -->
+    <section id="unplugCountdownBanner" class="hidden rounded-xl p-4 bg-amber-950/90 border-2 border-amber-500 shadow-xl">
+      <div class="flex items-center gap-3">
+        <div class="w-12 h-12 rounded-lg bg-amber-500/20 border border-amber-400 flex items-center justify-center text-amber-300 text-2xl font-black font-mono shrink-0" id="countdownSecondsBadge">
+          5
+        </div>
+        <div class="flex-1">
+          <div class="flex items-center gap-1.5 text-amber-300 font-bold text-xs uppercase font-mono tracking-wide">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <span>KABEL CHARGER TERPUTUS!</span>
+          </div>
+          <p class="text-xs text-amber-100 mt-0.5 leading-snug">
+            Sambungkan charger kembali dalam <strong id="countdownSecText" class="text-white font-mono underline">5 detik</strong> atau alarm bahaya akan berbunyi di kedua perangkat.
+          </p>
+        </div>
+      </div>
+      <div class="w-full bg-amber-950 rounded-full h-1.5 overflow-hidden mt-3 border border-amber-800/80">
+        <div id="countdownProgress" class="bg-amber-400 h-1.5 rounded-full transition-all duration-1000 ease-linear" style="width: 100%"></div>
+      </div>
+    </section>
+
+    <!-- Primary Status Card (Decision Tree Output) -->
+    <section id="mainStatusCard" class="rounded-xl border p-4 flex flex-col gap-2 transition-all duration-300 bg-slate-900/80 border-slate-800 shadow-sm">
+      <div class="flex items-center justify-between">
+        <span class="text-[11px] font-semibold text-slate-400 font-mono uppercase tracking-wider">KLASIFIKASI KEAMANAN (DECISION TREE)</span>
+        <span id="statusIcon" class="text-xl">⏳</span>
+      </div>
+      <h3 id="statusTitle" class="text-base font-bold tracking-tight text-white mt-0.5">
+        Sistem Siap Diaktifkan
+      </h3>
+      <p id="statusDescription" class="text-xs text-slate-400 leading-relaxed">
+        Tekan tombol "Aktifkan Pengawasan" di atas untuk memulai pemantauan sensor real-time.
+      </p>
+
+      <!-- Alarm Action Bar (Visible only when alarm sounds) -->
+      <div id="alarmActionRow" class="hidden mt-2.5 pt-2.5 border-t border-red-500/30 flex items-center gap-2">
+        <button onclick="disarmAlarm()" class="flex-1 min-h-[44px] py-2.5 px-3 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold text-xs font-mono uppercase flex items-center justify-center gap-2 shadow">
+          <i class="fa-solid fa-volume-xmark"></i> MATIKAN ALARM (DISARM)
+        </button>
+      </div>
+    </section>
+
+    <!-- Live Sensors Grid -->
+    <section class="grid grid-cols-2 gap-3">
+      
+      <!-- Fuel Gauge / Battery Sensor Card -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
+        <div class="flex items-center justify-between text-slate-400 mb-1">
+          <span class="text-[11px] font-mono text-slate-400 uppercase">Baterai (Gauge)</span>
+          <i id="batteryPlugIcon" class="fa-solid fa-plug text-xs text-slate-500"></i>
+        </div>
+        <div class="my-1 flex items-baseline gap-1.5">
+          <span id="batteryPercentText" class="text-3xl font-extrabold text-white font-mono">--</span>
+          <span class="text-xs text-slate-400 font-mono">%</span>
+        </div>
+        <div class="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden mt-1 border border-slate-800">
+          <div id="batteryProgressBar" class="bg-emerald-500 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+        </div>
+        <div class="mt-2.5 flex items-center justify-between text-[11px] text-slate-400">
+          <span>Charger:</span>
+          <span id="chargingStateText" class="font-semibold text-slate-300 font-mono">Membaca...</span>
+        </div>
+      </div>
+
+      <!-- Accelerometer 3-Axis & SMV Card -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
+        <div class="flex items-center justify-between text-slate-400 mb-1">
+          <span class="text-[11px] font-mono text-slate-400 uppercase">Gerakan Fisik</span>
+          <i class="fa-solid fa-arrows-up-down-left-right text-xs text-slate-500"></i>
+        </div>
+        <div class="my-1 flex items-baseline gap-1.5">
+          <span id="smvValueText" class="text-3xl font-extrabold font-mono text-white">0.00</span>
+          <span class="text-xs text-slate-400 font-mono">m/s²</span>
+        </div>
+        <div class="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden mt-1 border border-slate-800">
+          <div id="smvProgressBar" class="bg-indigo-500 h-1.5 rounded-full transition-all duration-100" style="width: 0%"></div>
+        </div>
+        <div class="mt-2.5 flex items-center justify-between text-[11px] text-slate-400">
+          <span>Threshold:</span>
+          <span id="thresholdDisplay" class="font-mono text-amber-400 font-semibold">> 2.50 m/s²</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Accelerometer 3-Axis Raw Detail -->
+    <section class="bg-slate-900/60 border border-slate-800 rounded-xl p-3">
+      <div class="flex items-center justify-between text-[11px] text-slate-400 mb-2 font-mono">
+        <span>RAW 3-AXIS ACCELEROMETER:</span>
+        <span id="accSampleRate" class="text-[10px] text-slate-500">10 Hz stream</span>
+      </div>
+      <div class="grid grid-cols-3 gap-2 text-center font-mono">
+        <div class="bg-slate-950 border border-slate-800/80 rounded-md p-1.5">
+          <div class="text-[9px] text-slate-500 uppercase">Sumbu X</div>
+          <div id="rawAccX" class="text-xs font-bold text-slate-300">0.00</div>
+        </div>
+        <div class="bg-slate-950 border border-slate-800/80 rounded-md p-1.5">
+          <div class="text-[9px] text-slate-500 uppercase">Sumbu Y</div>
+          <div id="rawAccY" class="text-xs font-bold text-slate-300">0.00</div>
+        </div>
+        <div class="bg-slate-950 border border-slate-800/80 rounded-md p-1.5">
+          <div class="text-[9px] text-slate-500 uppercase">Sumbu Z</div>
+          <div id="rawAccZ" class="text-xs font-bold text-slate-300">0.00</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Simulation & Testing Tools (Lab Demonstration) -->
+    <section class="bg-slate-900/40 border border-slate-800/80 rounded-xl p-3.5 flex flex-col gap-2">
+      <div class="flex items-center justify-between">
+        <span class="text-xs font-semibold text-slate-300 flex items-center gap-1.5 font-mono">
+          <i class="fa-solid fa-flask-vial text-emerald-400"></i> Alat Uji Simulasi Lab
+        </span>
+        <span class="text-[10px] text-slate-500 font-mono">Demo tanpa cabut fisik</span>
+      </div>
+      <div class="grid grid-cols-2 gap-2 mt-1">
+        <button onclick="simulateEvent('SAFE_CHARGING')" class="min-h-[40px] text-xs py-2 px-2.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center justify-center gap-1.5 transition">
+          <i class="fa-solid fa-bolt text-emerald-400"></i> Colok Charger
+        </button>
+        <button onclick="simulateEvent('FULL_BATTERY')" class="min-h-[40px] text-xs py-2 px-2.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center justify-center gap-1.5 transition">
+          <i class="fa-solid fa-battery-full text-cyan-400"></i> Simulasikan 100%
+        </button>
+        <button onclick="simulateEvent('POWER_CUT')" class="min-h-[40px] text-xs py-2 px-2.5 rounded-md bg-amber-950/40 hover:bg-amber-900/50 text-amber-200 border border-amber-800/50 flex items-center justify-center gap-1.5 transition">
+          <i class="fa-solid fa-plug-circle-xmark text-amber-400"></i> Cabut Halus (5s)
+        </button>
+        <button onclick="simulateEvent('THEFT_TRIGGER')" class="min-h-[40px] text-xs py-2 px-2.5 rounded-md bg-red-950/50 hover:bg-red-900/60 text-red-200 border border-red-800/60 flex items-center justify-center gap-1.5 font-bold transition">
+          <i class="fa-solid fa-skull-crossbones text-red-400"></i> Cabut Sentak (Curi!)
+        </button>
+      </div>
+    </section>
+
+    <!-- Navigation Shortcuts -->
+    <nav class="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-900 font-mono">
+      <a href="index.html" class="hover:text-white flex items-center gap-1.5">
+        <i class="fa-solid fa-house text-[11px]"></i> Hub
+      </a>
+      <a id="linkWatcher" href="node2.html" class="hover:text-cyan-300 flex items-center gap-1.5 text-slate-400">
+        <span>Watcher Node (HP 2)</span> <i class="fa-solid fa-arrow-right text-[11px]"></i>
+      </a>
+    </nav>
+
+  </main>
+
+  <!-- Configuration Modal -->
+  <div id="configModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-5 shadow-2xl flex flex-col gap-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+          <i class="fa-solid fa-sliders text-indigo-400"></i> Pengaturan Node 1
+        </h3>
+        <button onclick="toggleConfigModal()" class="text-slate-400 hover:text-white text-lg">&times;</button>
+      </div>
+
+      <div class="flex flex-col gap-3 text-xs">
+        <div>
+          <label class="block text-slate-400 mb-1">Room ID / Pairing Code:</label>
+          <input type="text" id="cfgRoomId" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 focus:outline-none">
+        </div>
+
+        <div>
+          <label class="block text-slate-400 mb-1">MQTT WebSocket Host:</label>
+          <input type="text" id="cfgMqttHost" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 focus:outline-none">
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-slate-400 mb-1">Port (WSS):</label>
+            <input type="number" id="cfgMqttPort" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 focus:outline-none">
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">Sensitivitas SMV (m/s²):</label>
+            <input type="number" step="0.1" id="cfgThreshold" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 focus:outline-none">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-slate-400 mb-1">Interval Telemetri (detik):</label>
+          <input type="number" id="cfgTelemetryInterval" value="3" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 focus:outline-none">
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+        <button onclick="toggleConfigModal()" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs">Batal</button>
+        <button onclick="saveConfiguration()" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs">Simpan & Terapkan</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main JavaScript Logic for Edge Device 1 -->
+  <script>
+    // Unique session ID to detect dual-tab or multi-device conflicts
+    const instanceSessionId = 'node1_' + Math.random().toString(36).substring(2, 8);
+
+    // System State Variables
+    let isGuarding = false;
+    let mqttClient = null;
+    let isMqttConnected = false;
+    let wakeLockMgr = new ChargeGuard.WakeLockManager();
+    let siren = new ChargeGuard.SirenSynthesizer();
+
+    // Configuration
+    let roomId = ChargeGuard.getRoomId();
+    let mqttHost = localStorage.getItem('cg_mqtt_host') || ChargeGuard.DEFAULT_MQTT_CONFIG.host;
+    let mqttPort = parseInt(localStorage.getItem('cg_mqtt_port') || ChargeGuard.DEFAULT_MQTT_CONFIG.port);
+    let smvThreshold = parseFloat(localStorage.getItem('cg_smv_threshold') || 2.5);
+    let telemetryIntervalSec = parseInt(localStorage.getItem('cg_telem_interval') || 3);
+
+    // Dynamic Sensor Variables
+    let batteryState = {
+      charging: false,
+      level: 0.75, // 0.0 - 1.0
+      isMocked: false
+    };
+
+    let motionState = {
+      x: 0,
+      y: 0,
+      z: 0,
+      smv: 0.0,
+      recentPeakSmv: 0.0,
+      buffer: [] // Rolling buffer of { time, smv } for the last 2 seconds
+    };
+
+    let currentStatus = 1; // 1, 2, 3, 4
+    let telemetryTimer = null;
+    let bufferCleanTimer = null;
+
+    // 5-Detik Unplug Grace Period State
+    let isUnplugGracePeriod = false;
+    let unplugCountdown = 5;
+    let unplugInterval = null;
+
+    // DOM Elements
+    const elements = {
+      roomIdDisplay: document.getElementById('roomIdDisplay'),
+      mqttBadge: document.getElementById('mqttBadge'),
+      mqttStatusText: document.getElementById('mqttStatusText'),
+      btnToggleGuard: document.getElementById('btnToggleGuard'),
+      armedBadge: document.getElementById('armedBadge'),
+      mainStatusCard: document.getElementById('mainStatusCard'),
+      statusIcon: document.getElementById('statusIcon'),
+      statusTitle: document.getElementById('statusTitle'),
+      statusDescription: document.getElementById('statusDescription'),
+      alarmActionRow: document.getElementById('alarmActionRow'),
+      batteryPercentText: document.getElementById('batteryPercentText'),
+      batteryProgressBar: document.getElementById('batteryProgressBar'),
+      chargingStateText: document.getElementById('chargingStateText'),
+      batteryPlugIcon: document.getElementById('batteryPlugIcon'),
+      smvValueText: document.getElementById('smvValueText'),
+      smvProgressBar: document.getElementById('smvProgressBar'),
+      thresholdDisplay: document.getElementById('thresholdDisplay'),
+      rawAccX: document.getElementById('rawAccX'),
+      rawAccY: document.getElementById('rawAccY'),
+      rawAccZ: document.getElementById('rawAccZ'),
+      linkWatcher: document.getElementById('linkWatcher'),
+      unplugCountdownBanner: document.getElementById('unplugCountdownBanner'),
+      countdownSecondsBadge: document.getElementById('countdownSecondsBadge'),
+      countdownSecText: document.getElementById('countdownSecText'),
+      countdownProgress: document.getElementById('countdownProgress')
+    };
+
+    // Initialize UI on load
+    window.addEventListener('DOMContentLoaded', () => {
+      elements.roomIdDisplay.textContent = roomId;
+      elements.linkWatcher.href = `node2.html?room=${roomId}`;
+      elements.thresholdDisplay.textContent = `> ${smvThreshold.toFixed(2)} m/s²`;
+      
+      initBatterySensor();
+      initMQTT();
+
+      // Clean motion buffer regularly (keep only entries within last 2000 ms)
+      bufferCleanTimer = setInterval(() => {
+        const now = Date.now();
+        motionState.buffer = motionState.buffer.filter(item => (now - item.time) <= 2000);
+        motionState.recentPeakSmv = motionState.buffer.reduce((max, item) => Math.max(max, item.smv), 0);
+      }, 250);
+    });
+
+    /**
+     * 1. Sensor Level & Status Baterai (Battery Status API)
+     */
+    async function initBatterySensor() {
+      if ('getBattery' in navigator) {
+        try {
+          const battery = await navigator.getBattery();
+          updateBatteryUI(battery.charging, battery.level);
+
+          battery.addEventListener('chargingchange', () => {
+            const wasCharging = batteryState.charging;
+            batteryState.charging = battery.charging;
+            updateBatteryUI(battery.charging, battery.level);
+            handleChargingChange(wasCharging, battery.charging);
+          });
+
+          battery.addEventListener('levelchange', () => {
+            batteryState.level = battery.level;
+            updateBatteryUI(battery.charging, battery.level);
+            evaluateDecisionTree();
+          });
+        } catch (err) {
+          console.warn('Battery Status API blocked/error:', err);
+          setupFallbackBattery();
+        }
+      } else {
+        console.warn('Battery Status API not supported in this browser.');
+        setupFallbackBattery();
+      }
+    }
+
+    function setupFallbackBattery() {
+      batteryState.isMocked = true;
+      elements.chargingStateText.textContent = 'Mode Uji (Emulasi)';
+      updateBatteryUI(batteryState.charging, batteryState.level);
+    }
+
+    function updateBatteryUI(charging, level) {
+      batteryState.charging = charging;
+      batteryState.level = level;
+      const pct = Math.round(level * 100);
+
+      elements.batteryPercentText.textContent = pct;
+      elements.batteryProgressBar.style.width = `${pct}%`;
+
+      if (charging) {
+        elements.chargingStateText.textContent = 'Tersambung (Mengisi)';
+        elements.chargingStateText.className = 'font-semibold text-emerald-400';
+        elements.batteryPlugIcon.className = 'fa-solid fa-plug text-emerald-400 animate-pulse';
+        elements.batteryProgressBar.className = 'bg-emerald-500 h-2 rounded-full transition-all duration-500';
+      } else {
+        elements.chargingStateText.textContent = 'Kabel Terputus';
+        elements.chargingStateText.className = 'font-semibold text-rose-400';
+        elements.batteryPlugIcon.className = 'fa-solid fa-plug-circle-xmark text-rose-400';
+        elements.batteryProgressBar.className = 'bg-amber-500 h-2 rounded-full transition-all duration-500';
+      }
+    }
+
+    /**
+     * 2. Sensor Akselerometer 3-Sumbu & SMV Calculation
+     */
+    function initMotionSensor() {
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        // iOS 13+ devices require explicit permission
+        DeviceMotionEvent.requestPermission()
+          .then(permissionState => {
+            if (permissionState === 'granted') {
+              window.addEventListener('devicemotion', handleMotionEvent);
+            } else {
+              alert('Izin sensor gerak ditolak.');
+            }
+          })
+          .catch(console.error);
+      } else if ('ondevicemotion' in window) {
+        window.addEventListener('devicemotion', handleMotionEvent);
+      } else {
+        console.warn('DeviceMotion API tidak didukung browser ini.');
+      }
+    }
+
+    function handleMotionEvent(event) {
+      if (!isGuarding) return;
+
+      // Ambil percepatan linier (tanpa gravitasi jika tersedia, fallback dengan reduksi gravitasi)
+      let acc = event.acceleration;
+      let x = 0, y = 0, z = 0;
+
+      if (acc && (acc.x !== null || acc.y !== null || acc.z !== null)) {
+        x = acc.x || 0;
+        y = acc.y || 0;
+        z = acc.z || 0;
+      } else if (event.accelerationIncludingGravity) {
+        // Fallback jika hanya accelerationIncludingGravity yang tersedia:
+        // Kurangi baseline gravitasi bumi (~9.8 m/s2)
+        const accG = event.accelerationIncludingGravity;
+        x = accG.x || 0;
+        y = accG.y || 0;
+        z = (accG.z || 9.8) - 9.8; // Kompensasi sumbu Z
+      }
+
+      // Hitung Signal Magnitude Vector (SMV): SMV = sqrt(X^2 + Y^2 + Z^2)
+      const smv = Math.sqrt(x * x + y * y + z * z);
+
+      motionState.x = x;
+      motionState.y = y;
+      motionState.z = z;
+      motionState.smv = smv;
+
+      // Simpan ke Rolling Buffer 2-detik
+      motionState.buffer.push({ time: Date.now(), smv: smv });
+
+      // Update UI Sensor
+      elements.rawAccX.textContent = x.toFixed(2);
+      elements.rawAccY.textContent = y.toFixed(2);
+      elements.rawAccZ.textContent = z.toFixed(2);
+      elements.smvValueText.textContent = smv.toFixed(2);
+
+      // Gauge bar (0 - 10 m/s2 scale)
+      const gaugePercent = Math.min(100, (smv / 10) * 100);
+      elements.smvProgressBar.style.width = `${gaugePercent}%`;
+      elements.smvProgressBar.className = (smv > smvThreshold)
+        ? 'bg-red-500 h-2 rounded-full transition-all duration-75 animate-pulse'
+        : 'bg-indigo-500 h-2 rounded-full transition-all duration-75';
+
+      // Evaluasi instan jika saat tidak charging terdeteksi gerakan sentak
+      if (!batteryState.charging && smv > smvThreshold && currentStatus !== 4) {
+        evaluateDecisionTree();
+      }
+    }
+
+    /**
+     * 3. Logika Decision Tree (Pohon Keputusan Klasifikasi Keamanan)
+     */
+    function evaluateDecisionTree() {
+      if (!isGuarding) return;
+
+      const isCharging = batteryState.charging;
+      const batteryLevelPct = Math.round(batteryState.level * 100);
+      
+      // Ambil nilai getaran puncak dalam jendela waktu 2 detik terakhir (Temporal Buffer)
+      const maxRecentSmv = Math.max(motionState.smv, motionState.recentPeakSmv);
+
+      let newStatus = 1;
+
+      if (isCharging) {
+        // [Mulai Evaluasi] -> charging == TRUE
+        if (batteryLevelPct >= 95) {
+          // Level Baterai >= 95% -> Status 2
+          newStatus = 2;
+        } else {
+          // Level Baterai < 95% -> Status 1
+          newStatus = 1;
+        }
+      } else {
+        // charging == FALSE (Kabel Terputus)
+        if (maxRecentSmv > smvThreshold) {
+          // Gerakan (SMV) > Threshold Ambang Batas -> Status 4: BAHAYA
+          newStatus = 4;
+        } else {
+          // Gerakan (SMV) <= Threshold -> Status 3: Peringatan (Padam / Kendor)
+          newStatus = 3;
+        }
+      }
+
+      applyStatus(newStatus);
+    }
+
+    /**
+     * Penanganan perubahan status kabel charger terputus (Fitur Delay 5 Detik)
+     */
+    function handleChargingChange(wasCharging, nowCharging) {
+      if (wasCharging && !nowCharging) {
+        // Kabel baru saja terputus! Mulai hitungan mundur toleransi 5 detik
+        startUnplugGracePeriod('Kabel charger terputus!');
+      } else if (!wasCharging && nowCharging) {
+        // Kabel dicolokkan kembali!
+        cancelUnplugGracePeriod();
+        if (currentStatus === 4) {
+          disarmAlarm();
+        }
+        applyStatus(1);
+      } else {
+        evaluateDecisionTree();
+      }
+    }
+
+    /**
+     * Logika Grace Period / Delay 5 Detik Saat Kabel Dicabut
+     */
+    function startUnplugGracePeriod(reason) {
+      if (isUnplugGracePeriod) return;
+      if (currentStatus === 4) return; // sudah alarm
+
+      isUnplugGracePeriod = true;
+      unplugCountdown = 5;
+
+      showCountdownUI(unplugCountdown);
+      siren.init();
+      siren.testBeep(520, 150);
+
+      // Status sementara: Peringatan Kabel Terputus (Status 3)
+      currentStatus = 3;
+      applyStatus(3);
+
+      if (unplugInterval) clearInterval(unplugInterval);
+      unplugInterval = setInterval(() => {
+        unplugCountdown--;
+        if (unplugCountdown > 0) {
+          showCountdownUI(unplugCountdown);
+          siren.testBeep(520, 150);
+          publishTelemetry();
+        } else {
+          // WAKTU 5 DETIK HABIS & TIDAK DICOLOK LAGI: KEDUA DEVICE BERBUNYI!
+          clearInterval(unplugInterval);
+          unplugInterval = null;
+          isUnplugGracePeriod = false;
+          hideCountdownUI();
+
+          triggerConfirmedAlarm('Waktu tenggang 5 detik habis: HP 1 tidak dicolok kembali!');
+        }
+      }, 1000);
+    }
+
+    function cancelUnplugGracePeriod() {
+      if (unplugInterval) {
+        clearInterval(unplugInterval);
+        unplugInterval = null;
+      }
+      isUnplugGracePeriod = false;
+      unplugCountdown = 5;
+      hideCountdownUI();
+
+      // Bunyi chime konfirmasi aman tersambung kembali
+      siren.testBeep(880, 100);
+      setTimeout(() => siren.testBeep(1175, 120), 120);
+
+      publishTelemetry();
+    }
+
+    function triggerConfirmedAlarm(reasonText) {
+      currentStatus = 4;
+      applyStatus(4);
+      publishAlertMessage('UNPLUG_TIMEOUT_THEFT', reasonText);
+    }
+
+    function showCountdownUI(sec) {
+      exitStealthMode();
+      if (!elements.unplugCountdownBanner) return;
+      elements.unplugCountdownBanner.classList.remove('hidden');
+      elements.countdownSecondsBadge.textContent = sec;
+      elements.countdownSecText.textContent = `${sec} detik`;
+      const pct = (sec / 5) * 100;
+      elements.countdownProgress.style.width = `${pct}%`;
+    }
+
+    function hideCountdownUI() {
+      if (!elements.unplugCountdownBanner) return;
+      elements.unplugCountdownBanner.classList.add('hidden');
+      elements.countdownProgress.style.width = '100%';
+    }
+
+    /**
+     * Terapkan status keamanan ke tampilan & suara
+     */
+    function applyStatus(statusCode) {
+      if (statusCode === 4) {
+        exitStealthMode();
+      }
+      currentStatus = statusCode;
+      const cfg = ChargeGuard.STATUS_CONFIG[statusCode];
+      if (!cfg) return;
+
+      elements.statusIcon.textContent = cfg.icon;
+      elements.statusTitle.textContent = cfg.name;
+      elements.statusDescription.textContent = cfg.desc;
+
+      // Styling main card
+      elements.mainStatusCard.className = `rounded-2xl border p-5 flex flex-col gap-2 transition-all duration-300 ${
+        statusCode === 4 ? 'bg-red-950/80 border-red-500 theft-danger' :
+        statusCode === 3 ? 'bg-amber-950/70 border-amber-500/80' :
+        statusCode === 2 ? 'bg-blue-950/70 border-blue-500/80' :
+        'bg-slate-900/80 border-emerald-500/40'
+      }`;
+
+      if (statusCode === 4) {
+        // Trigger Sirene & Getar Lokal di HP 1
+        siren.startAlarm();
+        if ('vibrate' in navigator) {
+          navigator.vibrate([500, 250, 500, 250, 500]);
+        }
+        elements.alarmActionRow.classList.remove('hidden');
+
+        // Publikasikan Alert Darurat (QoS 1) seketika
+        publishAlertMessage('THEFT_ALARM', 'Pencabutan kabel lebih dari 5 detik atau sentakan paksa!');
+      } else {
+        siren.stopAlarm();
+        elements.alarmActionRow.classList.add('hidden');
+      }
+
+      // Kirim telemetri segera jika status berubah
+      publishTelemetry();
+    }
+
+    function disarmAlarm() {
+      if (unplugInterval) {
+        clearInterval(unplugInterval);
+        unplugInterval = null;
+      }
+      isUnplugGracePeriod = false;
+      hideCountdownUI();
+
+      siren.stopAlarm();
+      elements.alarmActionRow.classList.add('hidden');
+      if (currentStatus === 4) {
+        currentStatus = 3; // Turunkan ke peringatan kabel terputus normal
+        applyStatus(3);
+      } else {
+        publishTelemetry();
+      }
+      publishCommand('DISARM_LOCAL', 'Alarm dinonaktifkan.');
+    }
+
+    /**
+     * Mode Layar Gelap (Stealth Black Screen)
+     * Menjaga layar tetap aktif via WakeLock tetapi piksel 100% hitam pekat (hemat daya & tersamar)
+     */
+    function toggleStealthMode() {
+      if (!isGuarding) {
+        toggleGuarding();
+      }
+      const overlay = document.getElementById('stealthOverlay');
+      if (overlay) {
+        overlay.classList.remove('hidden');
+        updateStealthClock();
+        if (document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen().catch(() => {});
+        }
+      }
+    }
+
+    function exitStealthMode() {
+      const overlay = document.getElementById('stealthOverlay');
+      if (overlay && !overlay.classList.contains('hidden')) {
+        overlay.classList.add('hidden');
+        if (document.exitFullscreen && document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+      }
+    }
+
+    function updateStealthClock() {
+      const clock = document.getElementById('stealthClock');
+      if (clock) {
+        clock.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' WIB';
+      }
+    }
+
+    /**
+     * 4. Toggle Mode Penjagaan (Guard Mode & Wake Lock)
+     */
+    async function toggleGuarding() {
+      if (!isGuarding) {
+        // Inisialisasi Audio Context lewat interaksi klik pengguna
+        siren.init();
+        siren.testBeep(660, 150);
+
+        // Minta Screen Wake Lock agar layar tidak mati
+        await wakeLockMgr.acquire();
+
+        // Aktifkan sensor gerak
+        initMotionSensor();
+
+        isGuarding = true;
+        elements.armedBadge.textContent = 'PENJAGAAN AKTIF';
+        elements.armedBadge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 uppercase tracking-wider font-mono animate-pulse';
+        elements.btnToggleGuard.className = 'w-full py-3.5 px-4 rounded-xl font-bold text-sm tracking-wide transition-all duration-200 flex items-center justify-center gap-2 shadow-md bg-rose-600 hover:bg-rose-500 text-white';
+        elements.btnToggleGuard.innerHTML = '<i class="fa-solid fa-stop"></i><span>HENTIKAN PENGAWASAN</span>';
+
+        // Mulai interval telemetri
+        startTelemetryTimer();
+        evaluateDecisionTree();
+      } else {
+        isGuarding = false;
+        wakeLockMgr.release();
+        siren.stopAlarm();
+        // Tetap jaga telemetry timer aktif agar status standby terkirim berkala
+        publishTelemetry();
+
+        elements.armedBadge.textContent = 'STANDBY';
+        elements.armedBadge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 uppercase tracking-wider font-mono';
+        elements.btnToggleGuard.className = 'w-full py-3.5 px-4 rounded-xl font-bold text-sm tracking-wide transition-all duration-200 flex items-center justify-center gap-2 shadow-md bg-emerald-600 hover:bg-emerald-500 text-white';
+        elements.btnToggleGuard.innerHTML = '<i class="fa-solid fa-power-off"></i><span>AKTIFKAN PENGAWASAN (START GUARD)</span>';
+
+        elements.mainStatusCard.className = 'rounded-2xl border p-5 flex flex-col gap-2 transition-all duration-300 bg-slate-900/80 border-slate-800';
+        elements.statusIcon.textContent = '⏳';
+        elements.statusTitle.textContent = 'Pengawasan Dijeda';
+        elements.statusDescription.textContent = 'Sensor gerak dan alarm dalam mode siaga.';
+        elements.alarmActionRow.classList.add('hidden');
+      }
+    }
+
+    /**
+     * 5. MQTT over WebSockets Communication
+     */
+    function initMQTT() {
+      const clientId = ChargeGuard.DEFAULT_MQTT_CONFIG.clientIdPrefix + 'node1_' + Math.random().toString(16).substring(2, 8);
+      mqttClient = new Paho.MQTT.Client(mqttHost, mqttPort, ChargeGuard.DEFAULT_MQTT_CONFIG.path, clientId);
+
+      mqttClient.onConnectionLost = onConnectionLost;
+      mqttClient.onMessageArrived = onMessageArrived;
+
+      const topics = ChargeGuard.getTopics(roomId);
+      
+      // MQTT Last Will and Testament: Jika HP 1 mati / terputus tiba-tiba
+      const willPayload = JSON.stringify({
+        node: 'node1',
+        roomId: roomId,
+        timestamp: Date.now(),
+        status: 'OFFLINE',
+        reason: 'DEVICE_POWERED_OFF_OR_DISCONNECTED'
+      });
+      const willMessage = new Paho.MQTT.Message(willPayload);
+      willMessage.destinationName = topics.heartbeat;
+      willMessage.qos = 1;
+      willMessage.retained = true;
+
+      const connectOptions = {
+        useSSL: true,
+        timeout: 8,
+        willMessage: willMessage,
+        onSuccess: onConnectSuccess,
+        onFailure: onConnectFailure
+      };
+
+      try {
+        elements.mqttStatusText.textContent = 'Menghubungkan...';
+        mqttClient.connect(connectOptions);
+      } catch (err) {
+        console.error('MQTT Connect Exception:', err);
+      }
+    }
+
+    function onConnectSuccess() {
+      isMqttConnected = true;
+      elements.mqttBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+      elements.mqttStatusText.textContent = 'MQTT Online';
+
+      const topics = ChargeGuard.getTopics(roomId);
+      // Subscribe to command topic from Watcher Node or Dashboard
+      mqttClient.subscribe(topics.command, { qos: 1 });
+      console.log('Subscribed to command topic:', topics.command);
+
+      // Siarkan status ONLINE ke heartbeat
+      const onlinePayload = JSON.stringify({
+        node: 'node1',
+        roomId: roomId,
+        timestamp: Date.now(),
+        status: 'ONLINE'
+      });
+      const onlineMsg = new Paho.MQTT.Message(onlinePayload);
+      onlineMsg.destinationName = topics.heartbeat;
+      onlineMsg.qos = 1;
+      onlineMsg.retained = true;
+      mqttClient.send(onlineMsg);
+
+      // Mulai kirim telemetri periodik seketika agar Node 2 & Dashboard langsung mendeteksi HP 1
+      startTelemetryTimer();
+      publishTelemetry();
+    }
+
+    function onConnectFailure(err) {
+      isMqttConnected = false;
+      elements.mqttBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30';
+      elements.mqttStatusText.textContent = 'Gagal';
+      console.warn('MQTT Connection Failed:', err);
+      setTimeout(initMQTT, 3000);
+    }
+
+    function onConnectionLost(responseObject) {
+      isMqttConnected = false;
+      elements.mqttBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30';
+      elements.mqttStatusText.textContent = 'Reconnecting...';
+      console.warn('MQTT Connection Lost:', responseObject.errorMessage);
+      setTimeout(initMQTT, 3000);
+    }
+
+    function onMessageArrived(message) {
+      try {
+        const payload = JSON.parse(message.payloadString);
+        console.log('Command received on Node 1:', payload);
+
+        if (payload.action === 'DISARM' || payload.action === 'MUTE') {
+          disarmAlarm();
+        } else if (payload.action === 'TEST_ALARM') {
+          siren.init();
+          siren.startAlarm();
+          if ('vibrate' in navigator) {
+            navigator.vibrate([400, 200, 400]);
+          }
+          setTimeout(() => {
+            if (currentStatus !== 4) {
+              siren.stopAlarm();
+            }
+          }, 1500);
+        } else if (payload.action === 'SET_THRESHOLD' && payload.threshold) {
+          smvThreshold = parseFloat(payload.threshold);
+          elements.thresholdDisplay.textContent = `> ${smvThreshold.toFixed(2)} m/s²`;
+        }
+      } catch (e) {
+        console.warn('Error parsing incoming MQTT message:', e);
+      }
+    }
+
+    function publishTelemetry() {
+      if (!mqttClient || !isMqttConnected) return;
+
+      const topics = ChargeGuard.getTopics(roomId);
+      const payload = {
+        node: 'node1',
+        senderId: instanceSessionId,
+        roomId: roomId,
+        timestamp: Date.now(),
+        isGuarding: isGuarding,
+        countdown: isUnplugGracePeriod ? unplugCountdown : null,
+        battery: {
+          level: Math.round(batteryState.level * 100),
+          charging: batteryState.charging
+        },
+        motion: {
+          smv: parseFloat(motionState.smv.toFixed(2)),
+          recentPeakSmv: parseFloat(motionState.recentPeakSmv.toFixed(2)),
+          threshold: smvThreshold,
+          raw: {
+            x: parseFloat(motionState.x.toFixed(2)),
+            y: parseFloat(motionState.y.toFixed(2)),
+            z: parseFloat(motionState.z.toFixed(2))
+          }
+        },
+        status: {
+          code: currentStatus,
+          name: ChargeGuard.STATUS_CONFIG[currentStatus].name
+        }
+      };
+
+      const msg = new Paho.MQTT.Message(JSON.stringify(payload));
+      msg.destinationName = topics.telemetry;
+      msg.qos = 0;
+      mqttClient.send(msg);
+    }
+
+    function publishAlertMessage(alertType, detail) {
+      if (!mqttClient || !isMqttConnected) return;
+
+      const topics = ChargeGuard.getTopics(roomId);
+      const alertPayload = {
+        node: 'node1',
+        senderId: instanceSessionId,
+        roomId: roomId,
+        timestamp: Date.now(),
+        alertType: alertType,
+        detail: detail,
+        statusCode: 4,
+        batteryLevel: Math.round(batteryState.level * 100),
+        smv: parseFloat(motionState.smv.toFixed(2)),
+        recentPeakSmv: parseFloat(motionState.recentPeakSmv.toFixed(2))
+      };
+
+      const msg = new Paho.MQTT.Message(JSON.stringify(alertPayload));
+      msg.destinationName = topics.alert;
+      msg.qos = 1; // Prioritas tinggi
+      mqttClient.send(msg);
+      console.log('High Priority Alert Sent:', alertPayload);
+    }
+
+    function publishCommand(action, messageText) {
+      if (!mqttClient || !isMqttConnected) return;
+      const topics = ChargeGuard.getTopics(roomId);
+      const cmdPayload = {
+        from: 'node1',
+        action: action,
+        message: messageText,
+        timestamp: Date.now()
+      };
+      const msg = new Paho.MQTT.Message(JSON.stringify(cmdPayload));
+      msg.destinationName = topics.command;
+      msg.qos = 1;
+      mqttClient.send(msg);
+    }
+
+    function startTelemetryTimer() {
+      stopTelemetryTimer();
+      telemetryTimer = setInterval(publishTelemetry, telemetryIntervalSec * 1000);
+    }
+
+    function stopTelemetryTimer() {
+      if (telemetryTimer) {
+        clearInterval(telemetryTimer);
+        telemetryTimer = null;
+      }
+    }
+
+    /**
+     * 6. Simulasi Event untuk Keperluan Demo Meja
+     */
+    async function simulateEvent(type) {
+      if (!isGuarding) {
+        // Otomatis aktifkan pengawasan agar simulasi demo berjalan lancar
+        await toggleGuarding();
+      }
+
+      if (type === 'SAFE_CHARGING') {
+        batteryState.charging = true;
+        cancelUnplugGracePeriod();
+        if (currentStatus === 4) {
+          disarmAlarm();
+        }
+        batteryState.level = 0.50;
+        updateBatteryUI(true, 0.50);
+        applyStatus(1);
+      } else if (type === 'FULL_BATTERY') {
+        batteryState.charging = true;
+        cancelUnplugGracePeriod();
+        if (currentStatus === 4) {
+          disarmAlarm();
+        }
+        batteryState.level = 0.98;
+        updateBatteryUI(true, 0.98);
+        applyStatus(2);
+      } else if (type === 'POWER_CUT') {
+        // Cabut charger tanpa getaran: jalankan waktu tenggang 5 detik!
+        batteryState.charging = false;
+        motionState.smv = 0.1;
+        motionState.recentPeakSmv = 0.1;
+        motionState.buffer = [];
+        updateBatteryUI(false, batteryState.level);
+        startUnplugGracePeriod('Simulasi Cabut Kabel (Waktu Tenggang 5 Detik)');
+      } else if (type === 'THEFT_TRIGGER') {
+        // Cabut charger dengan sentakan: jalankan waktu tenggang 5 detik!
+        batteryState.charging = false;
+        motionState.smv = 5.8;
+        motionState.recentPeakSmv = 5.8;
+        motionState.buffer.push({ time: Date.now(), smv: 5.8 });
+        updateBatteryUI(false, batteryState.level);
+        startUnplugGracePeriod('Simulasi Cabut Sentak (Waktu Tenggang 5 Detik)');
+      }
+    }
+
+    /**
+     * Penanganan Penutupan Website HP 1 (Menjamin Sistem Diam saat HP 1 Ditutup)
+     */
+    function notifyNode1Closing() {
+      if (unplugInterval) {
+        clearInterval(unplugInterval);
+        unplugInterval = null;
+      }
+      siren.stopAlarm();
+
+      if (mqttClient && isMqttConnected) {
+        const topics = ChargeGuard.getTopics(roomId);
+        const offlinePayload = JSON.stringify({
+          node: 'node1',
+          roomId: roomId,
+          timestamp: Date.now(),
+          status: 'OFFLINE',
+          isGuarding: false,
+          reason: 'WEBSITE_DITUTUP'
+        });
+        const msg = new Paho.MQTT.Message(offlinePayload);
+        msg.destinationName = topics.heartbeat;
+        msg.qos = 1;
+        msg.retained = true;
+        try { mqttClient.send(msg); } catch(e){}
+      }
+    }
+    window.addEventListener('beforeunload', notifyNode1Closing);
+    window.addEventListener('pagehide', notifyNode1Closing);
+
+    /**
+     * 7. Configuration Modal Handlers
+     */
+    function toggleConfigModal() {
+      const modal = document.getElementById('configModal');
+      modal.classList.toggle('hidden');
+      if (!modal.classList.contains('hidden')) {
+        document.getElementById('cfgRoomId').value = roomId;
+        document.getElementById('cfgMqttHost').value = mqttHost;
+        document.getElementById('cfgMqttPort').value = mqttPort;
+        document.getElementById('cfgThreshold').value = smvThreshold;
+        document.getElementById('cfgTelemetryInterval').value = telemetryIntervalSec;
+      }
+    }
+
+    function saveConfiguration() {
+      roomId = document.getElementById('cfgRoomId').value.trim() || 'iot-lab-101';
+      mqttHost = document.getElementById('cfgMqttHost').value.trim() || ChargeGuard.DEFAULT_MQTT_CONFIG.host;
+      mqttPort = parseInt(document.getElementById('cfgMqttPort').value) || ChargeGuard.DEFAULT_MQTT_CONFIG.port;
+      smvThreshold = parseFloat(document.getElementById('cfgThreshold').value) || 2.5;
+      telemetryIntervalSec = parseInt(document.getElementById('cfgTelemetryInterval').value) || 3;
+
+      localStorage.setItem('chargeguard_room', roomId);
+      localStorage.setItem('cg_mqtt_host', mqttHost);
+      localStorage.setItem('cg_mqtt_port', mqttPort);
+      localStorage.setItem('cg_smv_threshold', smvThreshold);
+      localStorage.setItem('cg_telem_interval', telemetryIntervalSec);
+
+      elements.roomIdDisplay.textContent = roomId;
+      elements.linkWatcher.href = `node2.html?room=${roomId}`;
+      elements.thresholdDisplay.textContent = `> ${smvThreshold.toFixed(2)} m/s²`;
+
+      toggleConfigModal();
+      if (mqttClient && mqttClient.isConnected()) {
+        mqttClient.disconnect();
+      }
+      initMQTT();
+    }
+  </script>
+</body>
+</html>

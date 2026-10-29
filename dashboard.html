@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChargeGuard - Local Central Dashboard</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Paho MQTT WebSockets Client -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="shared.js"></script>
+  <style>
+    @keyframes pulseCard {
+      0%, 100% { border-color: rgba(239, 68, 68, 0.4); }
+      50% { border-color: rgba(239, 68, 68, 1); }
+    }
+    .danger-border-pulse {
+      animation: pulseCard 1s infinite;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans select-none">
+
+  <!-- Top Navigation Bar: Mission-Control Header -->
+  <header class="border-b border-slate-800/90 bg-slate-900/95 sticky top-0 z-30 px-6 py-3.5 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+        <i class="fa-solid fa-gauge-high text-sm"></i>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="text-sm font-black tracking-wider text-white font-mono uppercase">CHARGEGUARD &bull; COMMAND CONSOLE</h1>
+          <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono border border-slate-700">CENTRAL TELEMETRY</span>
+        </div>
+        <p class="text-[11px] text-slate-400">Multi-Edge Real-Time Battery Estimator & Security Watchdog</p>
+      </div>
+    </div>
+
+    <!-- Right status cluster -->
+    <div class="flex items-center gap-2.5">
+      <!-- Room ID badge -->
+      <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-950 border border-slate-800 text-xs font-mono">
+        <i class="fa-solid fa-tower-broadcast text-emerald-400 text-[11px]"></i>
+        <span class="text-slate-400">ROOM:</span>
+        <span id="roomIdDisplay" class="font-bold text-white">...</span>
+      </div>
+
+      <!-- MQTT Status badge -->
+      <div id="mqttBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono font-medium bg-rose-500/15 text-rose-400 border border-rose-500/30">
+        <span class="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
+        <span id="mqttStatusText">Offline</span>
+      </div>
+
+      <!-- Siren audio mute toggle -->
+      <button onclick="toggleAudioSynthesizer()" id="btnAudioToggle" class="px-3 py-1 rounded-md text-xs font-mono font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center gap-1.5 transition">
+        <i class="fa-solid fa-volume-high text-emerald-400 text-[11px]"></i>
+        <span>Audio Aktif</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Emergency Alert Banner (Status 4) -->
+  <div id="dashboardAlertBanner" class="hidden bg-red-600 text-white px-6 py-2.5 flex items-center justify-between shadow-xl">
+    <div class="flex items-center gap-3">
+      <i class="fa-solid fa-triangle-exclamation text-xl"></i>
+      <div>
+        <span class="font-black tracking-wide text-xs font-mono uppercase">STATUS 4: BAHAYA PENCURIAN TERDETEKSI!</span>
+        <span class="text-xs text-red-100 ml-2">Node 1 mengalami pelepasan charger disertai lonjakan getaran fisik.</span>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <button onclick="sendRemoteCommand('DISARM')" class="bg-white text-red-700 hover:bg-slate-100 px-3.5 py-1.5 rounded-md font-bold text-xs shadow font-mono uppercase">
+        <i class="fa-solid fa-bell-slash text-[11px]"></i> DISARM
+      </button>
+    </div>
+  </div>
+
+  <!-- 5-Second Grace Period Countdown Banner on Dashboard -->
+  <div id="dashboardCountdownBanner" class="hidden bg-amber-500 text-amber-950 px-6 py-2 flex items-center justify-between font-bold text-xs shadow-md">
+    <div class="flex items-center gap-2">
+      <i class="fa-solid fa-clock text-base"></i>
+      <span>PERINGATAN: Kabel HP 1 terputus! Waktu tenggang <span id="dashCountdownSec" class="underline font-mono text-sm">5</span> detik sebelum alarm kedua device berbunyi...</span>
+    </div>
+    <span class="text-[10px] font-mono bg-amber-950/20 px-2 py-0.5 rounded border border-amber-900/30">Auto Alarm Watchdog</span>
+  </div>
+
+  <!-- Dual Node 1 Conflict Warning Banner -->
+  <div id="dashboardConflictBanner" class="hidden bg-amber-600 text-white px-6 py-2 flex items-center justify-between font-bold text-xs shadow-md">
+    <div class="flex items-center gap-2">
+      <i class="fa-solid fa-triangle-exclamation text-base text-yellow-200"></i>
+      <span>PERINGATAN: Terdeteksi 2 tab Node 1 aktif bersamaan (misal di Laptop & HP)! Harap tutup tab Node 1 di Laptop agar data grafik baterai HP 1 tidak zig-zag.</span>
+    </div>
+    <button onclick="document.getElementById('dashboardConflictBanner').classList.add('hidden')" class="text-[10px] bg-black/20 hover:bg-black/40 px-2.5 py-1 rounded text-white border border-white/20 font-mono">Tutup</button>
+  </div>
+
+  <!-- Main Content Layout -->
+  <main class="flex-1 p-5 sm:p-6 max-w-7xl w-full mx-auto flex flex-col gap-5">
+
+    <!-- Top KPI Cards Grid -->
+    <section class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      
+      <!-- Card 1: Decision Tree Status -->
+      <div id="kpiStatusCard" class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between shadow-sm transition-all duration-300">
+        <div class="flex items-center justify-between text-slate-400 text-xs font-mono">
+          <span>DECISION TREE STATUS</span>
+          <span id="statusIcon" class="text-lg">⏳</span>
+        </div>
+        <div class="my-2">
+          <div id="statusTitle" class="text-base font-bold text-white tracking-tight">Menunggu Node 1...</div>
+          <div id="statusDesc" class="text-[11px] text-slate-400 mt-0.5 line-clamp-2">Sistem belum menerima paket telemetri dari HP 1.</div>
+        </div>
+        <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] font-mono">
+          <span class="text-slate-400">Logika:</span>
+          <span id="logicRuleText" class="text-emerald-400 font-semibold">Rule-Based Edge</span>
+        </div>
+      </div>
+
+      <!-- Card 2: Battery Level & Charger Status -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between shadow-sm">
+        <div class="flex items-center justify-between text-slate-400 text-xs font-mono">
+          <span>FUEL GAUGE BATERAI</span>
+          <i id="batteryIcon" class="fa-solid fa-battery-half text-slate-400"></i>
+        </div>
+        <div class="my-2 flex items-baseline gap-2">
+          <span id="batteryPercentText" class="text-4xl font-extrabold text-white font-mono">--</span>
+          <span class="text-slate-400 text-xs font-mono">%</span>
+          <span id="chargingBadge" class="ml-auto text-[10px] px-2 py-0.5 rounded-full font-semibold font-mono bg-slate-800 text-slate-400">--</span>
+        </div>
+        <div class="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden border border-slate-800">
+          <div id="batteryProgressBar" class="bg-emerald-500 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+        </div>
+        <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400 mt-2 font-mono">
+          <span>Laju Cas:</span>
+          <span id="chargeRateText" class="font-bold text-emerald-400">-- %/menit</span>
+        </div>
+      </div>
+
+      <!-- Card 3: Linear Regression ETA -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between shadow-sm">
+        <div class="flex items-center justify-between text-slate-400 text-xs font-mono">
+          <span>ESTIMASI PENUH (REGRESI)</span>
+          <i class="fa-solid fa-clock-rotate-left text-cyan-400"></i>
+        </div>
+        <div class="my-2 flex items-baseline gap-2">
+          <span id="etaMinutesText" class="text-4xl font-extrabold text-cyan-300 font-mono">--</span>
+          <span class="text-slate-400 text-xs font-mono">Menit</span>
+        </div>
+        <div class="text-[11px] text-slate-400 flex items-center justify-between font-mono">
+          <span>Prediksi Jam:</span>
+          <span id="etaClockText" class="font-semibold text-white">--:-- WIB</span>
+        </div>
+        <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400 mt-2 font-mono">
+          <span>Model:</span>
+          <span id="regressionFormulaText" class="text-cyan-300 text-[10px]">L(t) = m&middot;t + c</span>
+        </div>
+      </div>
+
+      <!-- Card 4: Accelerometer SMV Stream -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col justify-between shadow-sm">
+        <div class="flex items-center justify-between text-slate-400 text-xs font-mono">
+          <span>SIGNAL MAGNITUDE (SMV)</span>
+          <i class="fa-solid fa-wave-square text-indigo-400"></i>
+        </div>
+        <div class="my-2 flex items-baseline gap-2">
+          <span id="smvValueText" class="text-4xl font-extrabold font-mono text-white">0.00</span>
+          <span class="text-slate-400 text-xs font-mono">m/s²</span>
+          <span id="motionStatusBadge" class="ml-auto text-[10px] px-2 py-0.5 rounded-full font-semibold font-mono bg-emerald-950 text-emerald-400 border border-emerald-800">Tenang</span>
+        </div>
+        <div class="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden border border-slate-800">
+          <div id="smvProgressBar" class="bg-indigo-500 h-1.5 rounded-full transition-all duration-100" style="width: 0%"></div>
+        </div>
+        <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400 mt-2 font-mono">
+          <span>Ambang Batas:</span>
+          <span id="thresholdDisplay" class="text-amber-400 font-bold">> 2.50 m/s²</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Charts Row (2 Visualizations) -->
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      
+      <!-- Chart 1: Battery Level & Linear Regression Projection -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 sm:p-5 flex flex-col shadow-sm">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h3 class="text-xs font-bold text-white flex items-center gap-2 font-mono uppercase">
+              <i class="fa-solid fa-chart-line text-emerald-400"></i> Time-Series Baterai & Proyeksi Regresi Linear
+            </h3>
+            <p class="text-[11px] text-slate-400 mt-0.5">Jendela waktu data riil & kalkulasi proyeksi kurva Y = mX + c</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="resetBatteryData()" class="text-[11px] px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-rose-300 border border-slate-700 flex items-center gap-1 font-mono transition">
+              <i class="fa-solid fa-trash-can text-[10px]"></i> Reset
+            </button>
+            <button onclick="simulateChargingData()" class="text-[11px] px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 flex items-center gap-1 font-mono transition">
+              <i class="fa-solid fa-flask text-[10px]"></i> Data Demo
+            </button>
+          </div>
+        </div>
+        <div class="relative flex-1 min-h-[260px] w-full">
+          <canvas id="batteryChart"></canvas>
+        </div>
+        <div class="mt-3 pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between text-xs text-slate-400 gap-2 font-mono">
+          <div>
+            <span>Slope (m): </span>
+            <span id="slopeVal" class="text-white font-semibold">--</span>
+          </div>
+          <div>
+            <span>Intercept (c): </span>
+            <span id="interceptVal" class="text-white font-semibold">--</span>
+          </div>
+          <div>
+            <span>Titik Sampel (N): </span>
+            <span id="sampleCountVal" class="text-white font-semibold">0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chart 2: Accelerometer SMV Real-Time Stream -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 sm:p-5 flex flex-col shadow-sm">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h3 class="text-xs font-bold text-white flex items-center gap-2 font-mono uppercase">
+              <i class="fa-solid fa-chart-area text-indigo-400"></i> Real-Time Stream SMV & Threshold
+            </h3>
+            <p class="text-[11px] text-slate-400 mt-0.5">Formula: SMV = &radic;(X&sup2; + Y&sup2; + Z&sup2;) dengan garis ambang bahaya</p>
+          </div>
+          <div class="flex items-center gap-1.5 font-mono text-[11px]">
+            <span class="inline-block w-2.5 h-0.5 bg-red-500"></span>
+            <span class="text-slate-400">Batas Bahaya</span>
+          </div>
+        </div>
+        <div class="relative flex-1 min-h-[260px] w-full">
+          <canvas id="smvChart"></canvas>
+        </div>
+        <div class="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400 font-mono">
+          <span>Komponen Sumbu:</span>
+          <div class="flex items-center gap-3 text-[11px]">
+            <span>X: <b id="chartAccX" class="text-slate-300 font-normal">0.0</b></span>
+            <span>Y: <b id="chartAccY" class="text-slate-300 font-normal">0.0</b></span>
+            <span>Z: <b id="chartAccZ" class="text-slate-300 font-normal">0.0</b></span>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Bottom Row: Audit Log Table & Remote Control Center -->
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      
+      <!-- Remote Control Center (1 column) -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col gap-3 shadow-sm">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-bold text-white flex items-center gap-2 font-mono uppercase">
+            <i class="fa-solid fa-gamepad text-emerald-400"></i> Pusat Kendali (Command Center)
+          </h3>
+          <span class="text-[10px] font-mono text-slate-500">MQTT QoS 1</span>
+        </div>
+        <p class="text-xs text-slate-400 leading-relaxed">Kirim instruksi kontrol jarak jauh ke Edge Devices di Room ini.</p>
+
+        <div class="flex flex-col gap-2">
+          <button onclick="sendRemoteCommand('DISARM')" class="w-full py-2.5 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 flex items-center justify-center gap-2 font-mono transition">
+            <i class="fa-solid fa-bell-slash text-emerald-400"></i> Matikan Alarm / Disarm
+          </button>
+          <button onclick="sendRemoteCommand('TEST_ALARM')" class="w-full py-2.5 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 flex items-center justify-center gap-2 font-mono transition">
+            <i class="fa-solid fa-volume-high text-amber-400"></i> Uji Suara Siren HP 1
+          </button>
+        </div>
+
+        <div class="pt-3 border-t border-slate-800/80 flex flex-col gap-2 font-mono">
+          <label class="text-[11px] text-slate-400 font-medium">Sensitivitas SMV Jarak Jauh (m/s²):</label>
+          <div class="flex items-center gap-2">
+            <input type="number" step="0.1" id="remoteThresholdInput" value="2.5" class="bg-slate-950 border border-slate-700 rounded-md px-3 py-1.5 text-xs text-white font-mono w-24 focus:outline-none focus:border-emerald-500">
+            <button onclick="sendThresholdUpdate()" class="flex-1 py-1.5 px-3 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs font-mono transition">
+              Update Node 1
+            </button>
+          </div>
+        </div>
+
+        <div class="pt-2 border-t border-slate-800/80 text-[10px] font-mono text-slate-500">
+          PROTOKOL: MQTT Over WebSockets (WSS)
+        </div>
+      </div>
+
+      <!-- Live Audit / Telemetry Event Log (2 columns) -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 flex flex-col lg:col-span-2 shadow-sm">
+        <div class="flex items-center justify-between mb-2.5">
+          <h3 class="text-xs font-bold text-white flex items-center gap-2 font-mono uppercase">
+            <i class="fa-solid fa-list-check text-cyan-400"></i> Log Riwayat Telemetri & Aktivitas
+          </h3>
+          <button onclick="clearActivityLogs()" class="text-[11px] text-slate-400 hover:text-slate-200 font-mono flex items-center gap-1 transition">
+            <i class="fa-solid fa-trash text-[10px]"></i> Bersihkan
+          </button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto max-h-[220px] rounded-lg border border-slate-800 bg-slate-950 p-2">
+          <table class="w-full text-left text-xs font-mono">
+            <thead class="text-[10px] text-slate-500 border-b border-slate-800 uppercase">
+              <tr>
+                <th class="py-1 px-2">Waktu</th>
+                <th class="py-1 px-2">Node</th>
+                <th class="py-1 px-2">Status</th>
+                <th class="py-1 px-2">Baterai</th>
+                <th class="py-1 px-2">SMV</th>
+                <th class="py-1 px-2">Keterangan</th>
+              </tr>
+            </thead>
+            <tbody id="auditLogTbody" class="divide-y divide-slate-800/40 text-[11px]">
+              <tr>
+                <td colspan="6" class="py-4 text-center text-slate-600 italic font-sans">Belum ada aktivitas tercatat.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+            </thead>
+            <tbody id="auditLogTbody" class="divide-y divide-slate-800/40 font-mono text-[11px]">
+              <tr>
+                <td colspan="6" class="py-4 text-center text-slate-600 italic">Belum ada aktivitas tercatat.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- JavaScript Logic for Dashboard -->
+  <script>
+    let mqttClient = null;
+    let isMqttConnected = false;
+    let roomId = ChargeGuard.getRoomId();
+    let mqttHost = localStorage.getItem('cg_mqtt_host') || ChargeGuard.DEFAULT_MQTT_CONFIG.host;
+    let mqttPort = parseInt(localStorage.getItem('cg_mqtt_port') || ChargeGuard.DEFAULT_MQTT_CONFIG.port);
+    let siren = new ChargeGuard.SirenSynthesizer();
+    let isAudioEnabled = true;
+
+    // Charts instances
+    let batteryChart = null;
+    let smvChart = null;
+
+    // Time-series data points for Linear Regression: [ { t: minutes, level: percent } ]
+    let startTime = Date.now();
+    let batteryDataPoints = [];
+    let currentSmvThreshold = 2.5;
+
+    // Dual-sender conflict tracking
+    let lastNode1SenderId = null;
+    let lastNode1SenderTime = 0;
+    let conflictBannerTimer = null;
+
+    // Elements
+    const elements = {
+      roomIdDisplay: document.getElementById('roomIdDisplay'),
+      mqttBadge: document.getElementById('mqttBadge'),
+      mqttStatusText: document.getElementById('mqttStatusText'),
+      dashboardAlertBanner: document.getElementById('dashboardAlertBanner'),
+      dashboardConflictBanner: document.getElementById('dashboardConflictBanner'),
+      dashboardCountdownBanner: document.getElementById('dashboardCountdownBanner'),
+      dashCountdownSec: document.getElementById('dashCountdownSec'),
+      kpiStatusCard: document.getElementById('kpiStatusCard'),
+      statusIcon: document.getElementById('statusIcon'),
+      statusTitle: document.getElementById('statusTitle'),
+      statusDesc: document.getElementById('statusDesc'),
+      batteryPercentText: document.getElementById('batteryPercentText'),
+      batteryProgressBar: document.getElementById('batteryProgressBar'),
+      batteryIcon: document.getElementById('batteryIcon'),
+      chargingBadge: document.getElementById('chargingBadge'),
+      chargeRateText: document.getElementById('chargeRateText'),
+      etaMinutesText: document.getElementById('etaMinutesText'),
+      etaClockText: document.getElementById('etaClockText'),
+      regressionFormulaText: document.getElementById('regressionFormulaText'),
+      smvValueText: document.getElementById('smvValueText'),
+      smvProgressBar: document.getElementById('smvProgressBar'),
+      thresholdDisplay: document.getElementById('thresholdDisplay'),
+      motionStatusBadge: document.getElementById('motionStatusBadge'),
+      chartAccX: document.getElementById('chartAccX'),
+      chartAccY: document.getElementById('chartAccY'),
+      chartAccZ: document.getElementById('chartAccZ'),
+      slopeVal: document.getElementById('slopeVal'),
+      interceptVal: document.getElementById('interceptVal'),
+      sampleCountVal: document.getElementById('sampleCountVal'),
+      auditLogTbody: document.getElementById('auditLogTbody'),
+      remoteThresholdInput: document.getElementById('remoteThresholdInput'),
+      dashboardCountdownBanner: document.getElementById('dashboardCountdownBanner'),
+      dashCountdownSec: document.getElementById('dashCountdownSec')
+    };
+
+    function showDashboardCountdown(sec) {
+      if (!elements.dashboardCountdownBanner) return;
+      elements.dashboardCountdownBanner.classList.remove('hidden');
+      elements.dashCountdownSec.textContent = sec;
+    }
+
+    function hideDashboardCountdown() {
+      if (!elements.dashboardCountdownBanner) return;
+      elements.dashboardCountdownBanner.classList.add('hidden');
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      elements.roomIdDisplay.textContent = roomId;
+      initCharts();
+      initMQTT();
+    });
+
+    function toggleAudioSynthesizer() {
+      isAudioEnabled = !isAudioEnabled;
+      const btn = document.getElementById('btnAudioToggle');
+      if (isAudioEnabled) {
+        siren.init();
+        siren.testBeep(880, 150);
+        btn.innerHTML = '<i class="fa-solid fa-volume-high text-emerald-400"></i> Audio Aktif';
+        btn.className = 'px-3 py-1 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center gap-1.5';
+      } else {
+        siren.stopAlarm();
+        btn.innerHTML = '<i class="fa-solid fa-volume-xmark text-rose-400"></i> Audio Mute';
+        btn.className = 'px-3 py-1 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-rose-400 border border-rose-900 flex items-center gap-1.5';
+      }
+    }
+
+    /**
+     * Inisialisasi Grafik Chart.js
+     */
+    function initCharts() {
+      // 1. Battery & Linear Regression Projection Chart
+      const ctxBattery = document.getElementById('batteryChart').getContext('2d');
+      batteryChart = new Chart(ctxBattery, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [
+            {
+              label: 'Level Baterai Aktual (%)',
+              data: [],
+              borderColor: '#10b981',
+              backgroundColor: 'rgba(16, 185, 129, 0.1)',
+              borderWidth: 2.5,
+              tension: 0.2,
+              fill: true,
+              pointRadius: 4,
+              pointBackgroundColor: '#10b981'
+            },
+            {
+              label: 'Proyeksi Regresi Linear (Y = mX + c)',
+              data: [],
+              borderColor: '#06b6d4',
+              borderDash: [5, 5],
+              borderWidth: 2,
+              pointRadius: 0,
+              fill: false
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: {
+              min: 0,
+              max: 100,
+              grid: { color: 'rgba(51, 65, 85, 0.3)' },
+              ticks: { color: '#94a3b8', font: { family: 'monospace', size: 10 } }
+            },
+            x: {
+              grid: { color: 'rgba(51, 65, 85, 0.3)' },
+              ticks: { color: '#94a3b8', font: { family: 'monospace', size: 10 } }
+            }
+          },
+          plugins: {
+            legend: {
+              labels: { color: '#cbd5e1', font: { size: 11 } }
+            }
+          }
+        }
+      });
+
+      // 2. SMV Real-Time Stream Chart
+      const ctxSmv = document.getElementById('smvChart').getContext('2d');
+      smvChart = new Chart(ctxSmv, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [
+            {
+              label: 'SMV (m/s²)',
+              data: [],
+              borderColor: '#6366f1',
+              backgroundColor: 'rgba(99, 102, 241, 0.15)',
+              borderWidth: 2,
+              tension: 0.3,
+              fill: true,
+              pointRadius: 0
+            },
+            {
+              label: 'Ambang Batas Getaran (Threshold)',
+              data: [],
+              borderColor: '#ef4444',
+              borderDash: [4, 4],
+              borderWidth: 1.5,
+              pointRadius: 0,
+              fill: false
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false, // Smooth continuous update
+          scales: {
+            y: {
+              min: 0,
+              max: 10,
+              grid: { color: 'rgba(51, 65, 85, 0.3)' },
+              ticks: { color: '#94a3b8', font: { family: 'monospace', size: 10 } }
+            },
+            x: {
+              grid: { display: false },
+              ticks: { display: false }
+            }
+          },
+          plugins: {
+            legend: {
+              labels: { color: '#cbd5e1', font: { size: 11 } }
+            }
+          }
+        }
+      });
+    }
+
+    /**
+     * MQTT Initialization
+     */
+    function initMQTT() {
+      const clientId = ChargeGuard.DEFAULT_MQTT_CONFIG.clientIdPrefix + 'dash_' + Math.random().toString(16).substring(2, 8);
+      mqttClient = new Paho.MQTT.Client(mqttHost, mqttPort, ChargeGuard.DEFAULT_MQTT_CONFIG.path, clientId);
+
+      mqttClient.onConnectionLost = onConnectionLost;
+      mqttClient.onMessageArrived = onMessageArrived;
+
+      const connectOptions = {
+        useSSL: true,
+        timeout: 5,
+        onSuccess: onConnectSuccess,
+        onFailure: onConnectFailure
+      };
+
+      try {
+        elements.mqttStatusText.textContent = 'Menghubungkan...';
+        mqttClient.connect(connectOptions);
+      } catch (err) {
+        console.error('MQTT Connect Error:', err);
+      }
+    }
+
+    function onConnectSuccess() {
+      isMqttConnected = true;
+      elements.mqttBadge.className = 'flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+      elements.mqttStatusText.textContent = 'MQTT Online';
+
+      const topics = ChargeGuard.getTopics(roomId);
+      // Subscribe to all topics in room
+      mqttClient.subscribe(`chargeguard/${roomId}/#`, { qos: 1 });
+      console.log(`Subscribed to chargeguard/${roomId}/#`);
+      addAuditRow(new Date().toLocaleTimeString(), 'DASHBOARD', 'INFO', '--', '--', `Terhubung ke broker room [${roomId}]`);
+    }
+
+    function onConnectFailure(err) {
+      isMqttConnected = false;
+      elements.mqttBadge.className = 'flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30';
+      elements.mqttStatusText.textContent = 'Koneksi Gagal';
+      setTimeout(initMQTT, 3000);
+    }
+
+    function onConnectionLost(responseObject) {
+      isMqttConnected = false;
+      elements.mqttBadge.className = 'flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30';
+      elements.mqttStatusText.textContent = 'Terputus';
+      setTimeout(initMQTT, 3000);
+    }
+
+    function onMessageArrived(message) {
+      const topic = message.destinationName;
+      const topics = ChargeGuard.getTopics(roomId);
+
+      try {
+        const payload = JSON.parse(message.payloadString);
+
+        if (topic === topics.alert) {
+          handleHighPriorityAlert(payload);
+        } else if (topic === topics.telemetry) {
+          handleTelemetryMessage(payload);
+        } else if (topic === topics.command) {
+          if (payload.action === 'DISARM') {
+            siren.stopAlarm();
+            hideDashboardCountdown();
+            applyStatus(1);
+          }
+          addAuditRow(new Date().toLocaleTimeString(), payload.from || 'CMD', 'PERINTAH', '--', '--', `${payload.action}: ${payload.message || ''}`);
+        } else if (topic === topics.heartbeat) {
+          if (payload.status === 'OFFLINE') {
+            siren.stopAlarm();
+            hideDashboardCountdown();
+            elements.dashboardAlertBanner.classList.add('hidden');
+            elements.statusIcon.textContent = '💤';
+            elements.statusTitle.textContent = 'HP 1 Offline / Tidak Aktif';
+            elements.statusDesc.textContent = 'HP 1 tidak membuka website atau dalam kondisi mati. Sistem siaga diam tanpa memicu suara.';
+            elements.kpiStatusCard.className = 'bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between shadow-sm';
+            addAuditRow(new Date().toLocaleTimeString(), 'NODE 1', 'OFFLINE', '--', '--', 'HP 1 offline / ditutup. Sistem dalam kondisi pasif tanpa alarm suara.');
+          } else if (payload.status === 'ONLINE') {
+            addAuditRow(new Date().toLocaleTimeString(), 'NODE 1', 'ONLINE', '--', '--', 'HP 1 kembali aktif terhubung.');
+          }
+        }
+      } catch (err) {
+        console.warn('Error handling incoming message:', err);
+      }
+    }
+
+    /**
+     * Handle Telemetry Message from Node 1
+     */
+    function handleTelemetryMessage(data) {
+      const timeStr = new Date(data.timestamp).toLocaleTimeString();
+
+      // Check multi-device publisher conflict (e.g. Laptop Node 1 vs HP 1 Node 1)
+      if (data.senderId) {
+        const now = Date.now();
+        if (lastNode1SenderId && lastNode1SenderId !== data.senderId && (now - lastNode1SenderTime) < 5000) {
+          if (elements.dashboardConflictBanner) {
+            elements.dashboardConflictBanner.classList.remove('hidden');
+          }
+          if (conflictBannerTimer) clearTimeout(conflictBannerTimer);
+          conflictBannerTimer = setTimeout(() => {
+            if (elements.dashboardConflictBanner) {
+              elements.dashboardConflictBanner.classList.add('hidden');
+            }
+          }, 8000);
+        }
+        lastNode1SenderId = data.senderId;
+        lastNode1SenderTime = now;
+      }
+
+      // Check 5-Second Grace Period Countdown from HP 1
+      if (data.countdown !== null && data.countdown !== undefined && data.countdown > 0) {
+        showDashboardCountdown(data.countdown);
+      } else {
+        hideDashboardCountdown();
+      }
+
+      // Update Battery Info
+      if (data.battery) {
+        const lvl = data.battery.level;
+        elements.batteryPercentText.textContent = lvl;
+        elements.batteryProgressBar.style.width = `${lvl}%`;
+
+        if (data.battery.charging) {
+          elements.chargingBadge.textContent = 'Mengisi Daya';
+          elements.chargingBadge.className = 'ml-auto text-[10px] px-2 py-0.5 rounded-full font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40';
+          elements.batteryIcon.className = 'fa-solid fa-battery-charging text-emerald-400 animate-pulse';
+        } else {
+          elements.chargingBadge.textContent = 'Kabel Lepas';
+          elements.chargingBadge.className = 'ml-auto text-[10px] px-2 py-0.5 rounded-full font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/40';
+          elements.batteryIcon.className = 'fa-solid fa-battery-quarter text-rose-400';
+        }
+
+        // Simpan titik ke time-series untuk linear regression
+        recordBatteryTimePoint(lvl);
+      }
+
+      // Update Motion & SMV
+      if (data.motion) {
+        const smv = data.motion.smv;
+        elements.smvValueText.textContent = smv.toFixed(2);
+        const gauge = Math.min(100, (smv / 10) * 100);
+        elements.smvProgressBar.style.width = `${gauge}%`;
+
+        currentSmvThreshold = data.motion.threshold || currentSmvThreshold;
+        elements.thresholdDisplay.textContent = `> ${currentSmvThreshold.toFixed(2)} m/s²`;
+
+        if (smv > currentSmvThreshold) {
+          elements.motionStatusBadge.textContent = 'Getaran Tinggi';
+          elements.motionStatusBadge.className = 'ml-auto text-[10px] px-2 py-0.5 rounded-full font-semibold bg-red-950 text-red-400 border border-red-800 animate-pulse';
+        } else {
+          elements.motionStatusBadge.textContent = 'Tenang';
+          elements.motionStatusBadge.className = 'ml-auto text-[10px] px-2 py-0.5 rounded-full font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800';
+        }
+
+        if (data.motion.raw) {
+          elements.chartAccX.textContent = data.motion.raw.x.toFixed(1);
+          elements.chartAccY.textContent = data.motion.raw.y.toFixed(1);
+          elements.chartAccZ.textContent = data.motion.raw.z.toFixed(1);
+        }
+
+        // Push data point to SMV Chart
+        pushSmvDataPoint(timeStr, smv, currentSmvThreshold);
+      }
+
+      // Update Decision Tree Status
+      if (data.status) {
+        applyStatus(data.status.code);
+      }
+
+      // Add row to audit log periodically
+      addAuditRow(
+        timeStr,
+        'NODE 1',
+        data.status ? `Status ${data.status.code}` : 'OK',
+        `${data.battery ? data.battery.level : '--'}%`,
+        data.motion ? data.motion.smv.toFixed(2) : '--',
+        data.battery && data.battery.charging ? 'Normal Charging' : 'Kabel terlepas'
+      );
+    }
+
+    /**
+     * Handle Status 4 (Theft Alert)
+     */
+    function handleHighPriorityAlert(alert) {
+      const timeStr = new Date(alert.timestamp).toLocaleTimeString();
+      applyStatus(4);
+
+      if (isAudioEnabled) {
+        siren.startAlarm();
+      }
+
+      addAuditRow(
+        timeStr,
+        'NODE 1',
+        'STATUS 4: BAHAYA',
+        `${alert.batteryLevel}%`,
+        `${alert.smv}`,
+        `ALERT: ${alert.detail}`
+      );
+    }
+
+    function applyStatus(statusCode) {
+      const cfg = ChargeGuard.STATUS_CONFIG[statusCode];
+      if (!cfg) return;
+
+      elements.statusIcon.textContent = cfg.icon;
+      elements.statusTitle.textContent = cfg.name;
+      elements.statusDesc.textContent = cfg.desc;
+
+      if (statusCode === 4) {
+        elements.kpiStatusCard.className = 'bg-red-950/90 border border-red-500 rounded-2xl p-4 flex flex-col justify-between shadow-lg danger-border-pulse';
+        elements.dashboardAlertBanner.classList.remove('hidden');
+      } else {
+        elements.dashboardAlertBanner.classList.add('hidden');
+        siren.stopAlarm();
+
+        if (statusCode === 3) {
+          elements.kpiStatusCard.className = 'bg-amber-950/70 border border-amber-500/80 rounded-2xl p-4 flex flex-col justify-between shadow-sm';
+        } else if (statusCode === 2) {
+          elements.kpiStatusCard.className = 'bg-blue-950/70 border border-blue-500/80 rounded-2xl p-4 flex flex-col justify-between shadow-sm';
+        } else {
+          elements.kpiStatusCard.className = 'bg-slate-900/80 border border-emerald-500/40 rounded-2xl p-4 flex flex-col justify-between shadow-sm';
+        }
+      }
+    }
+
+    /**
+     * Real-time SMV Chart Rolling Stream
+     */
+    function pushSmvDataPoint(label, smvValue, threshold) {
+      if (!smvChart) return;
+      const labels = smvChart.data.labels;
+      const dataSmv = smvChart.data.datasets[0].data;
+      const dataThresh = smvChart.data.datasets[1].data;
+
+      labels.push(label);
+      dataSmv.push(smvValue);
+      dataThresh.push(threshold);
+
+      // Keep only last 30 data points
+      if (labels.length > 30) {
+        labels.shift();
+        dataSmv.shift();
+        dataThresh.shift();
+      }
+      smvChart.update();
+    }
+
+    /**
+     * Time-Series Batch Processing & Linear Regression Algorithm
+     * Y = mX + c
+     */
+    function recordBatteryTimePoint(level) {
+      const elapsedMinutes = (Date.now() - startTime) / 60000;
+      const lastPoint = batteryDataPoints[batteryDataPoints.length - 1];
+
+      // Anti-jitter: Jika ada 2 tab terbuka (konflik pengirim) atau lompatan abnormal dalam selang singkat (< 15 detik),
+      // abaikan lompatan tajam (>= 2%) agar kurva tidak bergelombang / zig-zag
+      if (lastPoint) {
+        const timeDiffSec = (elapsedMinutes - lastPoint.t) * 60;
+        if (timeDiffSec < 15 && Math.abs(level - lastPoint.level) >= 2) {
+          console.warn(`Anti-jitter filter: mengabaikan lompatan ${lastPoint.level}% -> ${level}% (${timeDiffSec.toFixed(1)}s)`);
+          return;
+        }
+      }
+      
+      // Catat titik jika:
+      // 1. Titik pertama (belum ada data)
+      // 2. ATAU sudah berjalan >= 0.5 menit (30 detik)
+      // 3. ATAU persentase baterai berubah dan sudah minimal 15 detik dari titik sebelumnya
+      if (!lastPoint || (elapsedMinutes - lastPoint.t) >= 0.5 || (lastPoint.level !== level && (elapsedMinutes - lastPoint.t) * 60 >= 15)) {
+        batteryDataPoints.push({ t: elapsedMinutes, level: level });
+        updateLinearRegressionModel();
+      }
+    }
+
+    /**
+     * Reset Data Grafik Baterai & Estimasi Regresi
+     */
+    function resetBatteryData() {
+      batteryDataPoints = [];
+      startTime = Date.now();
+      if (batteryChart) {
+        batteryChart.data.labels = [];
+        batteryChart.data.datasets[0].data = [];
+        batteryChart.data.datasets[1].data = [];
+        batteryChart.update();
+      }
+      elements.sampleCountVal.textContent = '0';
+      elements.slopeVal.textContent = '--';
+      elements.interceptVal.textContent = '--';
+      elements.etaMinutesText.textContent = '--';
+      elements.chargeRateText.textContent = '-- %/menit';
+      elements.etaClockText.textContent = 'Menunggu data...';
+      elements.regressionFormulaText.textContent = 'Y = mX + c (Butuh >= 2 sampel)';
+      addAuditRow(new Date().toLocaleTimeString(), 'SYSTEM', 'RESET', '--', '--', 'Grafik baterai dibersihkan.');
+    }
+
+    function updateLinearRegressionModel() {
+      const reg = ChargeGuard.calculateLinearRegression(batteryDataPoints);
+      elements.sampleCountVal.textContent = batteryDataPoints.length;
+
+      if (!reg || reg.slope <= 0) {
+        elements.slopeVal.textContent = 'Menghitung...';
+        elements.interceptVal.textContent = '--';
+        elements.etaMinutesText.textContent = '--';
+        elements.chargeRateText.textContent = '-- %/menit';
+        elements.etaClockText.textContent = 'Menunggu data...';
+        elements.regressionFormulaText.textContent = 'Y = mX + c (Butuh >= 2 sampel)';
+        return;
+      }
+
+      const m = reg.slope;
+      const c = reg.intercept;
+      elements.slopeVal.textContent = `${m.toFixed(3)} %/mnt`;
+      elements.interceptVal.textContent = `${c.toFixed(2)}`;
+      elements.chargeRateText.textContent = `+${(m * 60).toFixed(1)} %/jam`;
+      elements.regressionFormulaText.textContent = `L(t) = ${m.toFixed(2)}·t + ${c.toFixed(1)}`;
+
+      if (reg.remainingMinutes !== null) {
+        elements.etaMinutesText.textContent = reg.remainingMinutes;
+        const etaDate = new Date(Date.now() + reg.remainingMinutes * 60000);
+        elements.etaClockText.textContent = etaDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' WIB';
+      }
+
+      // Update Proyeksi pada Grafik
+      renderRegressionChart(reg);
+    }
+
+    function renderRegressionChart(reg) {
+      if (!batteryChart) return;
+
+      const labels = [];
+      const actualData = [];
+      const projData = [];
+
+      // Titik aktual
+      batteryDataPoints.forEach(p => {
+        labels.push(`${p.t.toFixed(1)}m`);
+        actualData.push(p.level);
+        projData.push(reg ? (reg.slope * p.t + reg.intercept) : null);
+      });
+
+      // Tambahkan titik proyeksi ke depan (hingga 100%)
+      if (reg && reg.tFullMinutes && reg.remainingMinutes > 0) {
+        const futureT = reg.tFullMinutes;
+        labels.push(`${futureT.toFixed(1)}m (100%)`);
+        actualData.push(null);
+        projData.push(100);
+      }
+
+      batteryChart.data.labels = labels;
+      batteryChart.data.datasets[0].data = actualData;
+      batteryChart.data.datasets[1].data = projData;
+      batteryChart.update();
+    }
+
+    /**
+     * Simulasi Data Pengisian untuk Pembuktian Algoritma Regresi Seketika
+     */
+    function simulateChargingData() {
+      batteryDataPoints = [
+        { t: 0, level: 30 },
+        { t: 5, level: 36 },
+        { t: 10, level: 42 },
+        { t: 15, level: 48 },
+        { t: 20, level: 55 }
+      ];
+      startTime = Date.now() - 20 * 60000;
+      updateLinearRegressionModel();
+      addAuditRow(new Date().toLocaleTimeString(), 'SIM', 'INFO', '55%', '0.10', 'Data simulasi baterai 30% -> 55% diisi.');
+    }
+
+    /**
+     * Commands Publisher
+     */
+    function sendRemoteCommand(action) {
+      if (!mqttClient || !isMqttConnected) {
+        alert('MQTT belum terhubung.');
+        return;
+      }
+      const topics = ChargeGuard.getTopics(roomId);
+      const cmdPayload = {
+        action: action,
+        from: 'dashboard',
+        timestamp: Date.now()
+      };
+      const msg = new Paho.MQTT.Message(JSON.stringify(cmdPayload));
+      msg.destinationName = topics.command;
+      msg.qos = 1;
+      mqttClient.send(msg);
+
+      if (action === 'DISARM') {
+        siren.stopAlarm();
+        applyStatus(1);
+      }
+    }
+
+    function sendThresholdUpdate() {
+      const val = parseFloat(elements.remoteThresholdInput.value);
+      if (isNaN(val) || val <= 0) return;
+
+      if (!mqttClient || !isMqttConnected) return;
+      const topics = ChargeGuard.getTopics(roomId);
+      const cmdPayload = {
+        action: 'SET_THRESHOLD',
+        threshold: val,
+        from: 'dashboard',
+        timestamp: Date.now()
+      };
+      const msg = new Paho.MQTT.Message(JSON.stringify(cmdPayload));
+      msg.destinationName = topics.command;
+      msg.qos = 1;
+      mqttClient.send(msg);
+      addAuditRow(new Date().toLocaleTimeString(), 'DASHBOARD', 'CMD', '--', '--', `Ambang batas diubah ke > ${val} m/s²`);
+    }
+
+    /**
+     * Audit Log Table Helper
+     */
+    function addAuditRow(time, node, status, battery, smv, note) {
+      const tbody = elements.auditLogTbody;
+      if (tbody.children.length === 1 && tbody.children[0].innerText.includes('Belum ada')) {
+        tbody.innerHTML = '';
+      }
+
+      const row = document.createElement('tr');
+      row.className = status.includes('BAHAYA') ? 'bg-red-950/40 text-red-300 font-bold' : 'hover:bg-slate-900/60';
+      row.innerHTML = `
+        <td class="py-1.5 px-2 text-slate-400">${time}</td>
+        <td class="py-1.5 px-2 font-semibold text-slate-300">${node}</td>
+        <td class="py-1.5 px-2">${status}</td>
+        <td class="py-1.5 px-2 text-emerald-400">${battery}</td>
+        <td class="py-1.5 px-2 text-indigo-300">${smv}</td>
+        <td class="py-1.5 px-2 text-slate-300">${note}</td>
+      `;
+
+      tbody.insertBefore(row, tbody.firstChild);
+
+      // Batasi 40 baris log
+      if (tbody.children.length > 40) {
+        tbody.removeChild(tbody.lastChild);
+      }
+    }
+
+    function clearActivityLogs() {
+      elements.auditLogTbody.innerHTML = `
+        <tr>
+          <td colspan="6" class="py-4 text-center text-slate-600 italic">Log dibersihkan.</td>
+        </tr>
+      `;
+    }
+  </script>
+</body>
+</html>

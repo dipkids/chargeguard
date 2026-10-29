@@ -1,0 +1,10 @@
+node_modules/
+.env
+.DS_Store
+Thumbs.db
+*.log
+
+# Anti-slop tools
+skills/
+antislop.md
+.temp-antislop/
